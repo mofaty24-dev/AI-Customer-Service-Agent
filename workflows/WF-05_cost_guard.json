@@ -1,0 +1,63 @@
+{
+  "name": "WF-05 Cost Guard",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 1 }
+          ]
+        }
+      },
+      "id": "6f1d1c8e-0a51-4d0e-9a55-1b6f0a3c0001",
+      "name": "Hourly Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM run_cost_guard();",
+        "options": {}
+      },
+      "id": "6f1d1c8e-0a51-4d0e-9a55-1b6f0a3c0002",
+      "name": "Run Cost Guard",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ShopAssist Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ($json.out_level === 'kill' ? ':octagonal_sign: *KILL SWITCH ACTIVATED*' : ':warning: *AI cost warning*') + '\\nDaily AI cost: $' + Number($json.out_total_cost).toFixed(2) + ' (threshold $' + Number($json.out_threshold).toFixed(2) + ')\\n' + $json.out_action }) }}",
+        "options": {}
+      },
+      "id": "6f1d1c8e-0a51-4d0e-9a55-1b6f0a3c0003",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Hourly Trigger": {
+      "main": [[{ "node": "Run Cost Guard", "type": "main", "index": 0 }]]
+    },
+    "Run Cost Guard": {
+      "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": []
+}

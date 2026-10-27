@@ -1,0 +1,5 @@
+.env
+*.log
+pgdata/
+n8n_data/
+.DS_Store
