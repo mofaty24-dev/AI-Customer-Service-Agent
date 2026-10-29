@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from langgraph.checkpoint.memory import
 
 
-## TODO: Ingestion the data if it is in PDF form and store customer accessed policies and employee's separately  ##
+##  Ingestion the data if it is in PDF form and store customer accessed policies and employee's separately  ##
 customer_pdf_path = os.environ["CUSTOMER_PDF_PATH"]
 employee_pdf_path = os.environ["EMPLOYEE_PDF_PATH"]
 customers_loader = PyPDFLoader(file_path=customer_pdf_path)
@@ -24,7 +24,7 @@ employees_loader = PyPDFLoader(file_path=employee_pdf_path)
 customer_policies = customers_loader.load()
 employee_policies = employees_loader.load()
 
-## TODO: Split the data into chunks ##
+##  Split the data into chunks ##
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,
     chunk_overlap=200,
@@ -33,16 +33,16 @@ text_splitter = RecursiveCharacterTextSplitter(
 customer_chunks = text_splitter.split_documents(customer_policies)
 employee_chunks = text_splitter.split_documents(employee_policies)
 
-## TODO: initialize the embedding model ##
+## initialize the embedding model ##
 embedding_model = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-mpnet-base-v2")
 
-## TODO: store chunks in the vector store ##
+## store chunks in the vector store ##
 emp_vector_store = InMemoryVectorStore(embedding_model)
 cus_vector_store = InMemoryVectorStore(embedding_model)
 cus_vector_store.add_documents(customer_chunks)
 emp_vector_store.add_documents(employee_chunks)
 
-## TODO: Create dataclass and a schema for authentication state and context for the agent ##
+## Create dataclass and a schema for authentication state and context for the agent ##
 
 class AuthenticationState(AgentState):
 
@@ -59,7 +59,7 @@ class PolicyQuery(BaseModel):
 
 
 
-## TODO: Create a middleware to limit model access to needed info based on the user access type ##
+## Create a middleware to limit model access to needed info based on the user access type ##
 @tool
 def employee_authenticate(name:str, passcode:str, runtime:ToolRuntime) -> Command:
     """Authenticate the employee with the given name and passcode"""
@@ -78,7 +78,7 @@ def employee_authenticate(name:str, passcode:str, runtime:ToolRuntime) -> Comman
             ],
         })
 
-## TODO: prepare search function to retrieve relevant chunks from the vector store ##
+## prepare search function to retrieve relevant chunks from the vector store ##
 
 @tool(args_schema=PolicyQuery)
 def retrieve_customer_policy(query:str) -> str:
@@ -108,7 +108,7 @@ async def dynamic_tool_call(request:ModelRequest,handler:Callable[[ModelRequest]
     return await handler(request)
 
 
-## TODO: Make dynamic system prompt middleware to include customer respond and employee respond in the system prompt ##
+## Make dynamic system prompt middleware to include customer respond and employee respond in the system prompt ##
 
 @dynamic_prompt
 def dynamic_prompt_func(request:ModelRequest) -> str:
