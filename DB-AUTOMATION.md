@@ -9,6 +9,8 @@ workflow that watches daily AI spend and shuts automation down automatically.
 | `conversation_turn_audit` table (immutable, idempotent) | §9.2, §11 |
 | `system_settings` – `AUTOMATION_ENABLED` kill switch | §6.2 step 2, §15 |
 | `run_cost_guard()` + n8n workflow **WF-05** | §16 (daily cost > $12 / $200 per month) |
+| `run_retention()` + n8n workflow **WF-06** (12-month audit deletion) | §9.1, NFR-Audit |
+| n8n workflow **WF-02** Daily Report (Slack summary + attention rules) | – |
 | pgvector extension enabled (for RAG later) | §4.3 |
 
 ## Repo layout
@@ -18,13 +20,21 @@ workflow that watches daily AI spend and shuts automation down automatically.
 ├── docker-compose.yml            # PostgreSQL 16 + pgvector, and n8n (dev)
 ├── .env.example                  # copy to .env (never commit .env)
 ├── db/
-│   ├── migrations/               # 001..003, applied in order, once each
-│   └── tests/cost_guard_test.sql # self-cleaning SQL tests (7 checks)
-├── workflows/WF-05_cost_guard.json   # import into n8n
+│   ├── migrations/               # 001..004, applied in order, once each
+│   ├── seed/demo_traffic.sql     # fake traffic for dev demos
+│   └── tests/                    # self-cleaning SQL tests
+│       ├── cost_guard_test.sql   #   7 checks
+│       └── retention_test.sql    #   4 checks
+├── workflows/                    # import into n8n
+│   ├── WF-05_cost_guard.json
+│   ├── WF-06_retention.json
+│   └── WF-02_daily_report.json
 └── scripts/
     ├── migrate.sh                # apply pending migrations
     ├── test.sh                   # run SQL tests
-    ├── simulate_spend.sh         # fake spend, to demo the guard
+    ├── simulate_spend.sh         # fake spend, to demo the Cost Guard
+    ├── seed_demo_traffic.sh      # fake yesterday traffic, to demo the Daily Report
+    ├── clear_demo_data.sh        # remove all fake data (dev only)
     └── kill_switch.sh            # on | off | status
 ```
 
@@ -167,6 +177,116 @@ That is deliberate: re-enabling is a human decision.
 
 ---
 
+## Part 2b – Audit retention (n8n WF-06)
+
+SDD §9.1: audit records are kept **12 months, then deleted automatically**.
+
+**How it works:** every day at 03:00 n8n calls `SELECT * FROM run_retention();`.
+The function deletes rows in `conversation_turn_audit` older than
+`RETENTION_MONTHS` (default 12), writes one row to `retention_log`, and returns
+the cutoff date and how many rows were deleted.
+
+**Safety rail:** the function **refuses to run** if `RETENTION_MONTHS` is below
+12, because deleting audit data early is irreversible and would break the SDD
+requirement. If you ever need a shorter period (e.g. a privacy decision), change
+the check inside `run_retention()` in a new migration, with team approval.
+
+### Apply and test
+```bash
+./scripts/migrate.sh        # applies 004_retention.sql
+./scripts/test.sh           # retention_test.sql: ALL CHECKS PASSED (4/4)
+```
+The test checks: old rows are deleted, recent rows are kept, the run is logged,
+a second run deletes nothing, and a setting below 12 is refused.
+
+### Activate the workflow
+n8n -> **Workflows -> Import from file** -> `workflows/WF-06_retention.json`,
+select the **ShopAssist Postgres** credential in the **Run Retention** node, then
+toggle **Active**.
+
+### Check what it did
+```sql
+SELECT run_at, cutoff, rows_deleted FROM retention_log ORDER BY run_at DESC LIMIT 10;
+```
+
+> The retention run is itself a destructive action, so test it only on dev data
+> first. `retention_log` keeps proof of every run.
+
+---
+
+## Part 2c – Daily Report (n8n WF-02)
+
+Every morning at 08:00 (UTC) the workflow posts a summary of **yesterday** to
+Slack. It pings `@channel` **only when something looks wrong**; on a normal day
+it posts quietly.
+
+### The workflow, node by node
+
+| Node | Type | What it does |
+|---|---|---|
+| Daily 08:00 | Schedule Trigger | starts the run |
+| Yesterday Metrics | Postgres | one query: yesterday **and** the day before - turns, auto-send / human review / no-safe-reply counts, overrides, cost, p95 latency, avg reviewer score, plus the `DAILY_COST_WARN_USD` setting |
+| Intent Mix | Postgres | turns per intent |
+| Top Routing Reasons | Postgres | the 5 most common routing reasons |
+| Build Report | Code (JavaScript) | calculates percentages and day-over-day change, writes the Slack text, applies the attention rules |
+| Needs Attention? | IF | splits the flow on `severity` |
+| Slack - Attention | HTTP Request | sends the report **with** `@channel` |
+| Slack - Normal | HTTP Request | sends the report quietly |
+
+### Attention rules (constants at the top of the *Build Report* node)
+
+| Rule | Default |
+|---|---|
+| Share of turns with no safe reply | >= 10% |
+| AI cost reached the daily warning level | `DAILY_COST_WARN_USD` from `system_settings` |
+| Traffic fell vs the previous day | >= 50% (only if the previous day had >= 20 turns) |
+
+### Design notes
+- **No schema change.** It only reads `conversation_turn_audit` and `system_settings`.
+- **Every query returns exactly one row** (aggregates / `json_agg`), so an empty
+  day still produces a report, and no node runs more than once.
+- Day boundaries are **UTC**.
+
+### Try it end to end
+```bash
+./scripts/clear_demo_data.sh          # start clean (dev only)
+./scripts/seed_demo_traffic.sh        # fake yesterday + day before, a normal day
+```
+1. n8n -> **Import from file** -> `workflows/WF-02_daily_report.json`.
+2. In the three **Postgres** nodes select the **ShopAssist Postgres** credential.
+3. Click **Execute workflow**. Open the **Build Report** node output to read the
+   report text.
+4. Without a Slack webhook the last node shows an error. That is expected; the
+   report itself is already visible in step 3.
+
+Now see the attention path:
+```bash
+./scripts/clear_demo_data.sh
+./scripts/seed_demo_traffic.sh bad    # ~20% of turns with no safe reply
+```
+Execute again: the report ends with **Needs attention** and goes through
+*Slack - Attention*.
+
+Sample output (a bad day):
+```
+ShopAssist daily report - 2026-11-03
+Conversations: 120 (up 20% vs previous day)
+Auto-send: 62 (52%) | Human review: 27 (23%) | No safe reply: 31 (26%)
+Human overrides: 4
+AI cost: $8.06 (up 19%) | avg $0.0672 per turn
+Latency p95: 11.4 s | Avg reviewer score: 0.88
+Intents: escalation_request 25, ambiguous 22, off_topic 22, ...
+Top routing reasons: all_drafts_rejected 31, safety_flag 8, ...
+
+Needs attention
+- 25.8% of turns had no safe reply (limit 10%)
+```
+
+When you are happy, toggle the workflow to **Active**, and run
+`./scripts/clear_demo_data.sh` so fake rows never mix with real data.
+
+---
+
 ## Part 3 – Push to GitHub
 
 Create an **empty** repo on GitHub first (no README/.gitignore), then:
@@ -199,6 +319,6 @@ From now on: work on `feature/...` branches off `develop` and open a PR.
 ## Next features (same pattern)
 
 1. `kb_gaps` table + weekly gap report (for the RAG owner)
-2. Retention job – delete audit rows older than 12 months
-3. WF-02 Daily Report v2 (intent mix, auto-send rate, override rate)
-4. Customer feedback column + webhook
+2. Customer feedback column + webhook
+3. Error-handler workflow: when any workflow fails, log it and alert (today a
+   failed WF-05 / WF-06 / WF-02 run is only visible inside n8n)

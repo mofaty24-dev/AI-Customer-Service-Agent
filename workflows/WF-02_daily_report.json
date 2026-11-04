@@ -1,0 +1,250 @@
+{
+  "name": "WF-02 Daily Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0001",
+      "name": "Daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ((now() AT TIME ZONE 'UTC')::date - 1)::text                              AS day,\n       count(*) FILTER (WHERE d = 1)::int                                          AS turns,\n       count(*) FILTER (WHERE d = 1 AND outcome = 'auto_send')::int                AS auto_send,\n       count(*) FILTER (WHERE d = 1 AND outcome = 'human_review')::int             AS human_review,\n       count(*) FILTER (WHERE d = 1 AND outcome = 'all_rejected')::int             AS all_rejected,\n       count(*) FILTER (WHERE d = 1 AND overridden)::int                           AS overridden,\n       COALESCE(sum(cost_usd) FILTER (WHERE d = 1), 0)                             AS total_cost,\n       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE d = 1) AS p95_latency_ms,\n       avg(reviewer_score) FILTER (WHERE d = 1)                                    AS avg_reviewer_score,\n       count(*) FILTER (WHERE d = 2)::int                                          AS prev_turns,\n       COALESCE(sum(cost_usd) FILTER (WHERE d = 2), 0)                             AS prev_cost,\n       COALESCE(fn_setting('DAILY_COST_WARN_USD')::numeric, 0)                     AS cost_warn_usd\nFROM (\n  SELECT outcome, overridden, cost_usd, latency_ms, reviewer_score,\n         ((now() AT TIME ZONE 'UTC')::date - (received_at AT TIME ZONE 'UTC')::date) AS d\n  FROM conversation_turn_audit\n  WHERE received_at >= (((now() AT TIME ZONE 'UTC')::date - 2)::timestamp AT TIME ZONE 'UTC')\n    AND received_at <  ((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC')\n) t;",
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0002",
+      "name": "Yesterday Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ShopAssist Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]'::json) AS intents\nFROM (\n  SELECT COALESCE(intent, 'unknown') AS intent, count(*)::int AS n\n  FROM conversation_turn_audit\n  WHERE received_at >= (((now() AT TIME ZONE 'UTC')::date - 1)::timestamp AT TIME ZONE 'UTC') AND received_at < ((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC')\n  GROUP BY 1\n) t;",
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0003",
+      "name": "Intent Mix",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ShopAssist Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]'::json) AS reasons\nFROM (\n  SELECT reason, count(*)::int AS n\n  FROM conversation_turn_audit a, unnest(a.routing_reasons) AS reason\n  WHERE a.received_at >= (((now() AT TIME ZONE 'UTC')::date - 1)::timestamp AT TIME ZONE 'UTC') AND a.received_at < ((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC')\n  GROUP BY reason\n  ORDER BY n DESC\n  LIMIT 5\n) t;",
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0004",
+      "name": "Top Routing Reasons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        920,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ShopAssist Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Slack text + decides if the report \"needs attention\".\nconst REJECT_ALERT_PCT = 10;   // alert if >= 10% of turns ended with no safe reply\nconst TRAFFIC_DROP_PCT = 50;   // alert if traffic fell >= 50% vs the previous day...\nconst MIN_PREV_TURNS   = 20;   // ...but only when the previous day had at least this many turns\n\nconst m = $('Yesterday Metrics').first().json;\nconst asList = (v) => (typeof v === 'string' ? JSON.parse(v) : (v || []));\nconst intents = asList($('Intent Mix').first().json.intents);\nconst reasons = asList($('Top Routing Reasons').first().json.reasons);\n\nconst num  = (v) => Number(v ?? 0);\nconst pct  = (part, whole) => (whole > 0 ? (100 * part) / whole : 0);\nconst delta = (cur, prev) => (prev > 0 ? Math.round((100 * (cur - prev)) / prev) : null);\nconst arrow = (d) => (d === null ? 'n/a' : d > 0 ? `▲ ${d}%` : d < 0 ? `▼ ${Math.abs(d)}%` : '= 0%');\n\nconst turns = num(m.turns), prevTurns = num(m.prev_turns);\nconst cost = num(m.total_cost), prevCost = num(m.prev_cost), warn = num(m.cost_warn_usd);\nconst rejectedPct = pct(num(m.all_rejected), turns);\n\n// ---- attention rules ----\nconst alerts = [];\nif (turns > 0 && rejectedPct >= REJECT_ALERT_PCT)\n  alerts.push(`${rejectedPct.toFixed(1)}% of turns had no safe reply (limit ${REJECT_ALERT_PCT}%)`);\nif (warn > 0 && cost >= warn)\n  alerts.push(`AI cost $${cost.toFixed(2)} reached the daily warning level ($${warn.toFixed(2)})`);\nif (prevTurns >= MIN_PREV_TURNS && turns < prevTurns * (1 - TRAFFIC_DROP_PCT / 100))\n  alerts.push(`Traffic dropped ${Math.abs(delta(turns, prevTurns))}% vs the previous day - check the channels`);\n\n// ---- message ----\nconst lines = [`*ShopAssist daily report - ${m.day}*`];\nif (turns === 0) {\n  lines.push('No conversations were processed yesterday.');\n} else {\n  const p = (n) => `${n} (${pct(num(n), turns).toFixed(0)}%)`;\n  const p95 = m.p95_latency_ms == null ? 'n/a' : `${(num(m.p95_latency_ms) / 1000).toFixed(1)} s`;\n  const score = m.avg_reviewer_score == null ? 'n/a' : num(m.avg_reviewer_score).toFixed(2);\n  lines.push(`Conversations: *${turns}* (${arrow(delta(turns, prevTurns))} vs previous day)`);\n  lines.push(`Auto-send: ${p(m.auto_send)} | Human review: ${p(m.human_review)} | No safe reply: ${p(m.all_rejected)}`);\n  lines.push(`Human overrides: ${num(m.overridden)}`);\n  lines.push(`AI cost: *$${cost.toFixed(2)}* (${arrow(delta(cost, prevCost))}) | avg $${(cost / turns).toFixed(4)} per turn`);\n  lines.push(`Latency p95: ${p95} | Avg reviewer score: ${score}`);\n  if (intents.length) lines.push('Intents: ' + intents.map((i) => `${i.intent} ${i.n}`).join(', '));\n  if (reasons.length) lines.push('Top routing reasons: ' + reasons.map((r) => `${r.reason} ${r.n}`).join(', '));\n}\nif (alerts.length) lines.push('', ':warning: *Needs attention*', ...alerts.map((a) => `• ${a}`));\n\nreturn [{ json: { text: lines.join('\\n'), severity: alerts.length ? 'attention' : 'normal', alerts } }];\n"
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0005",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "5d1a7c10-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "attention",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0006",
+      "name": "Needs Attention?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '<!channel> ' + $json.text }) }}",
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0007",
+      "name": "Slack - Attention",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {}
+      },
+      "id": "8b3f3e0a-2c73-4f2a-9c77-3d8b2c5e0008",
+      "name": "Slack - Normal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 08:00": {
+      "main": [
+        [
+          {
+            "node": "Yesterday Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Yesterday Metrics": {
+      "main": [
+        [
+          {
+            "node": "Intent Mix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Mix": {
+      "main": [
+        [
+          {
+            "node": "Top Routing Reasons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top Routing Reasons": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Needs Attention?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Attention?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Attention",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack - Normal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

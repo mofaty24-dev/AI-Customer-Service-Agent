@@ -1,0 +1,45 @@
+{
+  "name": "WF-06 Audit Retention",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 3 }
+          ]
+        }
+      },
+      "id": "7a2e2d9f-1b62-4e1f-8b66-2c7a1b4d0001",
+      "name": "Daily 03:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM run_retention();",
+        "options": {}
+      },
+      "id": "7a2e2d9f-1b62-4e1f-8b66-2c7a1b4d0002",
+      "name": "Run Retention",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ShopAssist Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 03:00": {
+      "main": [[{ "node": "Run Retention", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": []
+}
