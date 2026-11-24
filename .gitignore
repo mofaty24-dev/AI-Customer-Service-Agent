@@ -3,3 +3,8 @@
 pgdata/
 n8n_data/
 .DS_Store
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
