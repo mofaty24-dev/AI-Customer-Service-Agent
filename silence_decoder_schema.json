@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "frustration_score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Customer frustration or hesitation level from 1 (calm) to 10 (about to leave)."
+    },
+    "main_objection": {
+      "type": "string",
+      "description": "Main reason the customer is hesitant to buy, as a short phrase in the customer's language."
+    },
+    "next_best_action": {
+      "type": "string",
+      "enum": [
+        "OFFER_DISCOUNT",
+        "PROPOSE_ALTERNATIVE",
+        "ASK_OPEN_QUESTION",
+        "CLOSE_DEAL"
+      ],
+      "description": "Direct recommendation for the Sales Agent's next message."
+    },
+    "lead_status": {
+      "type": "string",
+      "enum": [
+        "Hot",
+        "Warm",
+        "Cold"
+      ],
+      "description": "Customer purchase intent classification."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Dense 3-line summary of the customer's key requests, separated by newlines."
+    }
+  },
+  "required": [
+    "frustration_score",
+    "main_objection",
+    "next_best_action",
+    "lead_status",
+    "summary"
+  ],
+  "additionalProperties": false
+}
