@@ -1,0 +1,155 @@
+{
+  "id": "wf00JumiaFeeder01",
+  "name": "WF-00 Jumia Feeder",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Upload Jumia reviews",
+        "formDescription": "Choose jumia_reviews.csv. Every 1-2 star review becomes an escalation request.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "file",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": ".csv",
+              "multipleFiles": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f1000000-0000-4000-8000-000000000001",
+      "name": "Upload Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "f7a2c4b1-6e5d-4a1b-8b22-1f6d3e8b2001"
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}",
+        "options": {}
+      },
+      "id": "f1000000-0000-4000-8000-000000000002",
+      "name": "Read CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// How many complaints to send. Keep it small: with Telegram ON, every one is a real message.\nconst MAX_ESCALATIONS = 5;\n\n// 1) remove the invisible character at the start of the first column name\nconst clean = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.replace(/^\\uFEFF/, ''), v]));\n// 2) put multi-line text on one line\nconst flat = (t) => String(t ?? '').replace(/\\s+/g, ' ').trim();\n\nconst complaints = items\n  .map((i) => clean(i.json))\n  .filter((r) => Number(r.customer_rating) <= 2)   // only 1-2 star reviews\n  .slice(0, MAX_ESCALATIONS);\n\nreturn complaints.map((r, idx) => {\n  const stars = Number(r.customer_rating);\n  const headline = flat(r.headline);\n  const review = flat(r.review);\n  const text = headline === review ? review : [headline, review].filter(Boolean).join(' - ');\n  return {\n    json: {\n      conversation_id: `jumia-${r.sku}-${idx + 1}`,\n      reason: 'customer_frustrated',\n      frustration_score: stars === 1 ? 9 : 7,\n      channel: 'web',\n      summary: `${flat(r.product_name)}: ${text}`.slice(0, 500),\n    },\n  };\n});\n"
+      },
+      "id": "f1000000-0000-4000-8000-000000000003",
+      "name": "Build Escalations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/escalate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "f1000000-0000-4000-8000-000000000004",
+      "name": "Send to Escalation Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One-line summary of what the receiver answered.\nconst counts = {};\nfor (const i of items) { const s = i.json.status || ('http_' + (i.json.statusCode || '?')); counts[s] = (counts[s] || 0) + 1; }\nreturn [{ json: { sent: items.length, results: counts } }];\n"
+      },
+      "id": "f1000000-0000-4000-8000-000000000005",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Upload Form": {
+      "main": [
+        [
+          {
+            "node": "Read CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CSV": {
+      "main": [
+        [
+          {
+            "node": "Build Escalations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Escalations": {
+      "main": [
+        [
+          {
+            "node": "Send to Escalation Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Escalation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

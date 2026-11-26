@@ -1,0 +1,176 @@
+{
+  "name": "WF-02 Monthly Sales Report",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Monthly Sales Report",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "file",
+              "fieldType": "file",
+              "fieldName": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".csv",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "month",
+              "fieldName": "month",
+              "placeholder": "2026-10 (leave empty = latest month in the file)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "47b4110c-cafd-445d-b95b-ed2178780a8f",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "6f7ad57c-61ef-47c0-b05a-d56110372897"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}",
+        "options": {
+          "headerRow": true
+        }
+      },
+      "id": "e2e989e4-8164-4fd7-839f-e8437d0ee06e",
+      "name": "Read CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PLACEHOLDER - paste the real report code here.\n// Must return ONE item: { title, text, html, month, send_telegram (boolean), chat_id (string) }\nreturn [{ json: { title: '', text: '', html: '', month: '', send_telegram: false, chat_id: '' } }];"
+      },
+      "id": "3f18a615-fedc-4aa6-a4dd-cf77a6db967c",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send_telegram }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6f722038-36de-4f52-b494-5a4e7d1e8e86",
+      "name": "Send to Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "8d1571cc-ea36-4b79-996e-87e9be4e98cf",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        0
+      ],
+      "webhookId": "04cd08af-d3b3-4fb1-a19b-bd9d2f021e56"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CSV": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "35b46942-c174-4ca6-a953-f7560880a3f4",
+  "meta": {
+    "instanceId": "1d6adc76d4883cbb939dbd9875dffa37c5106e799ede1d397be6dedc8da7c708"
+  },
+  "nodeGroups": [],
+  "id": "iLWsSGa4PZi3N1zj",
+  "tags": []
+}
