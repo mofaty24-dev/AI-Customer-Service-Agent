@@ -1,10 +1,10 @@
 {
-  "name": "My workflow",
+  "name": "DEPI Business Sales Analysis Automation",
   "nodes": [
     {
       "parameters": {
         "method": "POST",
-        "url": "https://characteristic-fisher-renewable-strengths.trycloudflare.com/analyze",
+        "url": "https://REPLACE_WITH_YOUR_PUBLIC_API_URL/analyze",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

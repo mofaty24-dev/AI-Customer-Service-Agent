@@ -1,18 +1,41 @@
-# DEPI Business Analysis - n8n Automation Bridge
+DEPI Business / Sales Analysis
+Run the API
+Open a terminal in the business_analysis directory.
+If your virtual environment is not active, activate it from this directory using PowerShell:
+..\.venv\Scripts\Activate.ps1
 
-## Run API (from project root, activated venv)
-```powershell
+Install the required packages:
 pip install -r requirements.txt
+
+Start the API:
 uvicorn api:app --reload
-```
-API docs: http://127.0.0.1:8000/docs
 
-## Test
-- GET http://127.0.0.1:8000/health
-- POST http://127.0.0.1:8000/analyze with JSON body `{}` to analyze default Data/sales_data.csv
-- POST same endpoint with body `{"records":[{"order_id":"A1","date":"2026-01-01","product":"Item","quantity":2,"unit_price":10,"status":"completed"}]}` to analyze supplied records.
+API documentation: http://127.0.0.1:8000/docs
+Test the API
 
-## n8n
-Import `n8n_workflow.json`. If n8n runs in Docker on the same machine, `host.docker.internal` may work.
-If n8n Cloud, localhost/host.docker.internal will not reach your computer: expose the API using a secure tunnel or deploy it publicly with authentication.
-Configure the Email node credentials and replace REPLACE_WITH_EMAIL.
+Health check: GET http://127.0.0.1:8000/health
+Analyze the default CSV file: POST http://127.0.0.1:8000/analyze with an empty JSON body {}.
+Analyze custom records: send this JSON body to POST /analyze:
+
+{
+  "records": [
+    {
+      "order_id": "A1",
+      "date": "2026-01-01",
+      "product": "Item",
+      "quantity": 2,
+      "unit_price": 10,
+      "status": "completed"
+    }
+  ]
+}
+
+n8n Automation
+Import the workflow file business_analyst.json into n8n.
+In the Call Analytics API node, replace the placeholder API URL with your currently active public API URL:
+https://REPLACE_WITH_YOUR_PUBLIC_API_URL/analyze
+For n8n Cloud, a local address such as localhost will not reach your computer. You must expose the API through a secure tunnel or deploy it to a public server.
+If you use a temporary Cloudflare Tunnel URL, remember that it may change when the tunnel restarts.
+Configure the OpenAI credentials for the AI Business Analyst node before running the workflow.
+The workflow currently uses a Manual Trigger, so you need to execute it manually in n8n.
+Security note: The API does not currently include authentication. Use temporary access for project demonstrations only; add authentication before production deployment.
